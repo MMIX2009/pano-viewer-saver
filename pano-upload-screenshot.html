@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>360° Panorama Viewer with Screenshot</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #111;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      margin-top: 20px;
+    }
+    #controls {
+      margin: 10px;
+    }
+    #viewer {
+      width: 90vw;
+      height: 80vh;
+      border: 2px solid #333;
+      margin-bottom: 20px;
+    }
+    input[type="file"], button {
+      margin-left: 10px;
+      padding: 6px 12px;
+      font-size: 14px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+    }
+    button {
+      background-color: #00bcd4;
+      color: white;
+    }
+    #status {
+      margin: 10px;
+      font-size: 14px;
+      color: #ccc;
+    }
+    #debug {
+      font-size: 12px;
+      color: #666;
+      margin: 10px;
+      display: none;
+    }
+    .manual-screenshot {
+      background-color: #ff6b6b;
+      margin-left: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🌀 360° Panorama Viewer</h1>
+  <div id="controls">
+    <input type="file" id="fileInput" accept="image/*">
+    <button id="screenshotBtn">📸 Current View Screenshot</button>
+  </div>
+  <div id="status">Select an image file to load panorama (try a 360° photo or equirectangular image)</div>
+  <div id="debug"></div>
+  <div id="viewer"></div>
+  <script>
+    let viewer = null;
+    let isLoaded = false;
+    let originalImageData = null;
+    
+    // Debug logging
+    function debugLog(message) {
+      console.log(message);
+      const debugDiv = document.getElementById('debug');
+      debugDiv.style.display = 'block';
+      debugDiv.innerHTML += '<br>' + new Date().toLocaleTimeString() + ': ' + message;
+    }
+    
+    function updateStatus(message) {
+      document.getElementById('status').textContent = message;
+    }
+    
+    function getTimestampFilename(prefix = 'pano') {
+      const now = new Date();
+      const timestamp = now.toISOString().replace(/[:.]/g, '-');
+      return `${prefix}_${timestamp}.png`;
+    }
+    
+    function downloadScreenshot(dataURL) {
+      const link = document.createElement('a');
+      link.download = getTimestampFilename('pano_screenshot');
+      link.href = dataURL;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      updateStatus('Screenshot saved!');
+      debugLog('Screenshot saved successfully');
+    }
+    
+    // Check if Pannellum is loaded
+    if (typeof pannellum === 'undefined') {
+      updateStatus('Error: Pannellum library failed to load');
+      debugLog('Pannellum library not found');
+    } else {
+      debugLog('Pannellum library loaded successfully');
+    }
+    
+    document.getElementById('fileInput').addEventListener('change', function (event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      updateStatus('Loading image...');
+      
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        updateStatus('Please select a valid image file (JPG, PNG, etc.)');
+        return;
+      }
+      
+      // Check file size (limit to 50MB)
+      if (file.size > 50 * 1024 * 1024) {
+        updateStatus('File too large. Please select an image smaller than 50MB.');
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const dataURL = e.target.result;
+        originalImageData = dataURL; // Store original image
+        
+        // Clear previous viewer
+        if (viewer) {
+          try {
+            viewer.destroy();
+          } catch (err) {
+            console.log('Error destroying previous viewer:', err);
+          }
+          viewer = null;
+        }
+        
+        document.getElementById('viewer').innerHTML = '';
+        isLoaded = false;
+        
+        // Add a small delay to ensure DOM is ready
+        setTimeout(() => {
+          try {
+            updateStatus('Initializing panorama viewer...');
+            
+            viewer = pannellum.viewer('viewer', {
+              type: 'equirectangular',
+              panorama: dataURL,
+              autoLoad: true,
+              pitch: 0,
+              yaw: 0,
+              hfov: 100,
+              compass: true,
+              showZoomCtrl: true,
+              showFullscreenCtrl: true,
+              mouseZoom: true,
+              keyboardZoom: true,
+              draggable: true,
+              friction: 0.15,
+              crossOrigin: 'anonymous',
+              onLoad: function () {
+                isLoaded = true;
+                updateStatus('Panorama loaded successfully! Click and drag to explore.');
+                debugLog('Pannellum onLoad callback fired - panorama fully loaded');
+                console.log('Pannellum loaded successfully');
+              },
+              onError: function (error) {
+                updateStatus('Error loading panorama: ' + error);
+                debugLog('Pannellum error: ' + error);
+                console.error('Pannellum error:', error);
+              }
+            });
+            
+            console.log('Pannellum viewer initialized');
+            
+          } catch (error) {
+            updateStatus('Error initializing viewer: ' + error.message);
+            console.error('Viewer initialization error:', error);
+          }
+        }, 100);
+      };
+      
+      reader.onerror = function() {
+        updateStatus('Error reading file');
+        console.error('FileReader error');
+      };
+      
+      reader.readAsDataURL(file);
+    });
+    
+    // Current view screenshot - captures what you're currently seeing
+    document.getElementById('screenshotBtn').addEventListener('click', function () {
+      if (!viewer || !originalImageData) {
+        alert("Please load a panorama first.");
+        return;
+      }
+      
+      try {
+        // Get current view parameters
+        const pitch = viewer.getPitch();
+        const yaw = viewer.getYaw();
+        const hfov = viewer.getHfov();
+        const vfov = hfov * 0.75; // Approximate vertical FOV
+        
+        debugLog(`Current view - Pitch: ${pitch}°, Yaw: ${yaw}°, HFOV: ${hfov}°`);
+        
+        // Create a canvas with the original image and extract current view
+        const img = new Image();
+        img.onload = function() {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          
+          // Set output canvas size (viewer dimensions)
+          const viewerElement = document.getElementById('viewer');
+          const viewerRect = viewerElement.getBoundingClientRect();
+          canvas.width = Math.floor(viewerRect.width);
+          canvas.height = Math.floor(viewerRect.height);
+          
+          // Calculate which part of the equirectangular image to show
+          const imgWidth = img.width;
+          const imgHeight = img.height;
+          
+          // Convert spherical coordinates to equirectangular coordinates
+          // Yaw maps to horizontal position (0° = center, -180° = left edge, +180° = right edge)
+          // Pitch maps to vertical position (90° = top, 0° = center, -90° = bottom)
+          
+          // Calculate center point in the source image
+          const centerX = (yaw + 180) / 360 * imgWidth; // Convert yaw to x coordinate
+          const centerY = (90 - pitch) / 180 * imgHeight; // Convert pitch to y coordinate
+          
+          // Calculate the size of the crop area based on FOV
+          const cropWidth = (hfov / 360) * imgWidth;
+          const cropHeight = (vfov / 180) * imgHeight;
+          
+          // Calculate crop boundaries
+          let sourceX = centerX - cropWidth / 2;
+          let sourceY = centerY - cropHeight / 2;
+          let sourceWidth = cropWidth;
+          let sourceHeight = cropHeight;
+          
+          // Handle wrapping around the edges for yaw (horizontal wrapping)
+          if (sourceX < 0) {
+            // Split the crop into two parts: end of image + beginning of image
+            const rightPart = imgWidth + sourceX;
+            const leftPart = -sourceX;
+            
+            // Draw right part of panorama
+            ctx.drawImage(img, 
+              rightPart, sourceY, leftPart, sourceHeight,
+              0, 0, (leftPart / sourceWidth) * canvas.width, canvas.height
+            );
+            
+            // Draw left part of panorama
+            ctx.drawImage(img, 
+              0, sourceY, cropWidth - leftPart, sourceHeight,
+              (leftPart / sourceWidth) * canvas.width, 0, 
+              ((cropWidth - leftPart) / sourceWidth) * canvas.width, canvas.height
+            );
+          } else if (sourceX + sourceWidth > imgWidth) {
+            // Split the crop: beginning of image + start of image
+            const rightPart = imgWidth - sourceX;
+            const leftPart = sourceWidth - rightPart;
+            
+            // Draw right part
+            ctx.drawImage(img, 
+              sourceX, sourceY, rightPart, sourceHeight,
+              0, 0, (rightPart / sourceWidth) * canvas.width, canvas.height
+            );
+            
+            // Draw wrapped left part
+            ctx.drawImage(img, 
+              0, sourceY, leftPart, sourceHeight,
+              (rightPart / sourceWidth) * canvas.width, 0,
+              (leftPart / sourceWidth) * canvas.width, canvas.height
+            );
+          } else {
+            // Normal case - no horizontal wrapping needed
+            
+            // Clamp vertical boundaries
+            sourceY = Math.max(0, Math.min(sourceY, imgHeight - sourceHeight));
+            sourceHeight = Math.min(sourceHeight, imgHeight - sourceY);
+            
+            // Draw the cropped section
+            ctx.drawImage(img, 
+              sourceX, sourceY, sourceWidth, sourceHeight,
+              0, 0, canvas.width, canvas.height
+            );
+          }
+          
+          const dataURL = canvas.toDataURL("image/png");
+          downloadScreenshot(dataURL);
+          
+          updateStatus('Current view screenshot saved!');
+          debugLog(`View screenshot created - crop area: ${Math.round(sourceX)},${Math.round(sourceY)} ${Math.round(sourceWidth)}x${Math.round(sourceHeight)}`);
+        };
+        
+        img.src = originalImageData;
+        
+      } catch (err) {
+        alert("View screenshot failed: " + err.message);
+        debugLog('View screenshot error: ' + err.message);
+      }
+    });
+  </script>
+</body>
+</html>
